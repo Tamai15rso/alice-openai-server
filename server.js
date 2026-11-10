@@ -5,18 +5,19 @@ const PORT = process.env.PORT || 10000;
 const MODEL = "gpt-6-luna";
 
 const SYSTEM_PROMPT =
-  "Ты продвинутый голосовой ИИ-собеседник в навыке Алисы. " +
+  "Ты продвинутый голосовой ИИ-помощник в навыке Алисы. " +
   "Разговаривай по-русски, естественно и понятно. " +
-  "Учитывай всю предоставленную историю диалога. " +
-  "Не теряй тему разговора. " +
+  "Твоя задача — поддерживать непрерывный диалог. " +
+  "Учитывай предыдущие сообщения, старые воспоминания " +
+  "и краткое содержание прошлых разговоров. " +
+  "Помни обсуждаемые темы, имена, решения и предпочтения. " +
   "Если пользователь говорит 'он', 'она', 'это', " +
-  "'тот вариант', 'продолжай' или 'расскажи подробнее', " +
-  "опирайся на предыдущие сообщения. " +
-  "Помни обсуждаемые имена, решения, предпочтения и цели. " +
-  "Если в истории нет нужных сведений, не выдумывай их. " +
+  "'тот вариант', 'продолжай' или 'почему', " +
+  "опирайся на контекст разговора. " +
+  "Если сведений недостаточно, уточняй, а не выдумывай. " +
   "Отвечай без Markdown, удобно для произнесения вслух. " +
   "Обычно отвечай кратко, до 350 символов. " +
-  "Не утверждай, что знаешь свежие новости без проверки.";
+  "Не утверждай, что знаешь свежие события без проверки.";
 
 function send(res, status, data) {
   res.writeHead(status, {
@@ -40,7 +41,7 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
-  // Защита соединения Cloudflare -> Render
+  // Проверяем секрет между Cloudflare и Render
   if (
     !process.env.RELAY_SECRET ||
     req.headers["x-relay-secret"] !== process.env.RELAY_SECRET
@@ -90,33 +91,45 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // Получаем историю разговора от Cloudflare
     const incomingMessages =
       Array.isArray(payload.messages)
         ? payload.messages
         : [];
 
-    // Проверяем сообщения и ограничиваем их размер
-    const history = incomingMessages
+    // Принимаем историю и системные блоки памяти
+    const context = incomingMessages
       .filter(message =>
         message &&
-        (message.role === "user" ||
-         message.role === "assistant") &&
-        typeof message.content === "string"
+        (
+          message.role === "user" ||
+          message.role === "assistant" ||
+          message.role === "system"
+        ) &&
+        typeof message.content === "string" &&
+        message.content.trim()
       )
-      .slice(-30)
+      .slice(-45)
       .map(message => ({
         role: message.role,
-        content: message.content.slice(0, 2000)
+        content: message.content.slice(0, 6000)
       }));
 
-    // Не дублируем последний вопрос
+    // Убираем системный промпт Cloudflare,
+    // чтобы не дублировать инструкции
     if (
-      history.length > 0 &&
-      history[history.length - 1].role === "user" &&
-      history[history.length - 1].content === question
+      context.length > 0 &&
+      context[0].role === "system"
     ) {
-      history.pop();
+      context.shift();
+    }
+
+    // Не дублируем текущий вопрос
+    if (
+      context.length > 0 &&
+      context[context.length - 1].role === "user" &&
+      context[context.length - 1].content === question
+    ) {
+      context.pop();
     }
 
     const messages = [
@@ -124,7 +137,7 @@ const server = http.createServer(async (req, res) => {
         role: "system",
         content: SYSTEM_PROMPT
       },
-      ...history,
+      ...context,
       {
         role: "user",
         content: question
