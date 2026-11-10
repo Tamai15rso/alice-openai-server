@@ -2,12 +2,16 @@
 const http = require("node:http");
 
 const PORT = process.env.PORT || 10000;
+const MODEL = "gpt-6-luna";
 
 const server = http.createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
 
   if (req.method === "GET" && req.url === "/") {
-    res.end(JSON.stringify({ status: "ok" }));
+    res.end(JSON.stringify({
+      status: "ok",
+      server: "Alice OpenAI Server"
+    }));
     return;
   }
 
@@ -17,11 +21,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const secret = process.env.RELAY_SECRET;
-
-  if (!secret || req.headers["x-relay-secret"] !== secret) {
+  if (
+    !process.env.RELAY_SECRET ||
+    req.headers["x-relay-secret"] !== process.env.RELAY_SECRET
+  ) {
     res.statusCode = 401;
     res.end(JSON.stringify({ error: "Unauthorized" }));
+    return;
+  }
+
+  if (!process.env.OPENAI_API_KEY) {
+    res.statusCode = 500;
+    res.end(JSON.stringify({ error: "OpenAI key missing" }));
     return;
   }
 
@@ -30,6 +41,7 @@ const server = http.createServer(async (req, res) => {
 
     for await (const chunk of req) {
       body += chunk;
+
       if (body.length > 10000) {
         res.statusCode = 413;
         res.end(JSON.stringify({ error: "Request too large" }));
@@ -54,22 +66,24 @@ const server = http.createServer(async (req, res) => {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          model: "gpt-6-luna",
+          model: MODEL,
           messages: [
             {
               role: "system",
               content:
                 "Ты голосовой собеседник в навыке Алисы. " +
-                "Отвечай по-русски, естественно, кратко, " +
-                "без Markdown, максимум 350 символов."
+                "Твоя модель — GPT-6 Luna от OpenAI. " +
+                "Если спрашивают о версии, отвечай: GPT-6 Luna. " +
+                "Не выдумывай дату окончания знаний. " +
+                "Отвечай по-русски, естественно, " +
+                "кратко, без Markdown, до 350 символов."
             },
             {
               role: "user",
-              content: question.slice(0, 2000)
+              content: question.trim().slice(0, 2000)
             }
           ],
-          reasoning_effort: "minimal",
-          max_completion_tokens: 200
+          max_completion_tokens: 300
         }),
         signal: AbortSignal.timeout(20000)
       }
@@ -78,6 +92,13 @@ const server = http.createServer(async (req, res) => {
     const data = await response.json();
 
     if (!response.ok) {
+      console.error(
+        "OPENAI ERROR:",
+        response.status,
+        data.error?.code || "",
+        data.error?.message || ""
+      );
+
       res.statusCode = 502;
       res.end(JSON.stringify({
         error: "OpenAI request failed",
@@ -88,20 +109,30 @@ const server = http.createServer(async (req, res) => {
 
     const answer = data.choices?.[0]?.message?.content;
 
+    console.log("REQUESTED MODEL:", MODEL);
+    console.log("ACTUAL MODEL:", data.model || "unknown");
+
     if (!answer?.trim()) {
       res.statusCode = 502;
-      res.end(JSON.stringify({ error: "Empty AI response" }));
+      res.end(JSON.stringify({
+        error: "Empty AI response",
+        model: data.model || null
+      }));
       return;
     }
 
     res.end(JSON.stringify({
-      answer: answer.trim().slice(0, 350)
+      answer: answer.trim().slice(0, 350),
+      model: data.model || null
     }));
 
   } catch (error) {
-    console.error("Chat error:", error.message);
+    console.error("CHAT ERROR:", error.message);
+
     res.statusCode = 502;
-    res.end(JSON.stringify({ error: "Chat unavailable" }));
+    res.end(JSON.stringify({
+      error: "Chat unavailable"
+    }));
   }
 });
 
