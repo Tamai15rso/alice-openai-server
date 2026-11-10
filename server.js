@@ -9,53 +9,40 @@ function send(res, status, data) {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store"
   });
+
   res.end(JSON.stringify(data));
 }
 
 const server = http.createServer(async (req, res) => {
+  // Проверка работы сервера
   if (req.method === "GET" && req.url === "/") {
-    return send(res, 200, { status: "ok" });
+    return send(res, 200, {
+      status: "ok"
+    });
   }
 
-  // Проверка модели через официальный OpenAI API
-  if (req.method === "GET" && req.url === "/check-model") {
-    try {
-      const response = await fetch(
-        `https://api.openai.com/v1/models/${MODEL}`,
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
-          },
-          signal: AbortSignal.timeout(15000)
-        }
-      );
-
-      const data = await response.json();
-
-      return send(res, response.status, {
-        http_status: response.status,
-        model_exists: response.ok,
-        model_id: response.ok ? data.id : null,
-        error: response.ok ? null : data.error?.message
-      });
-    } catch (error) {
-      return send(res, 502, { error: error.message });
-    }
-  }
-
+  // Разрешаем только запросы от Cloudflare
   if (req.method !== "POST" || req.url !== "/chat") {
-    return send(res, 404, { error: "Not found" });
+    return send(res, 404, {
+      error: "Not found"
+    });
   }
 
+  // Проверка секретного ключа между Cloudflare и Render
   if (
     !process.env.RELAY_SECRET ||
     req.headers["x-relay-secret"] !== process.env.RELAY_SECRET
   ) {
-    return send(res, 401, { error: "Unauthorized" });
+    return send(res, 401, {
+      error: "Unauthorized"
+    });
   }
 
+  // Проверка ключа OpenAI
   if (!process.env.OPENAI_API_KEY) {
-    return send(res, 500, { error: "OpenAI key missing" });
+    return send(res, 500, {
+      error: "OpenAI key missing"
+    });
   }
 
   try {
@@ -65,14 +52,21 @@ const server = http.createServer(async (req, res) => {
       body += chunk;
 
       if (body.length > 10000) {
-        return send(res, 413, { error: "Request too large" });
+        return send(res, 413, {
+          error: "Request too large"
+        });
       }
     }
 
     const { question } = JSON.parse(body);
 
-    if (typeof question !== "string" || !question.trim()) {
-      return send(res, 400, { error: "Question required" });
+    if (
+      typeof question !== "string" ||
+      !question.trim()
+    ) {
+      return send(res, 400, {
+        error: "Question required"
+      });
     }
 
     const response = await fetch(
@@ -80,7 +74,8 @@ const server = http.createServer(async (req, res) => {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Authorization":
+            `Bearer ${process.env.OPENAI_API_KEY}`,
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
@@ -89,10 +84,14 @@ const server = http.createServer(async (req, res) => {
             {
               role: "system",
               content:
-                "Ты голосовой собеседник в навыке Алисы. " +
-                "Отвечай на русском языке, естественно, " +
-                "кратко и без Markdown, до 350 символов. " +
-                "Не придумывай свою версию или дату знаний."
+                "Ты умный голосовой собеседник в навыке Алисы. " +
+                "Отвечай по-русски, естественно и понятно. " +
+                "Избегай Markdown, списков и длинных вступлений. " +
+                "Ответ должен быть удобен для произнесения вслух. " +
+                "Старайся укладываться в 350 символов. " +
+                "Если информации недостаточно или она " +
+                "может быть устаревшей, честно скажи об этом. " +
+                "Не придумывай сведения о своей версии."
             },
             {
               role: "user",
@@ -111,6 +110,7 @@ const server = http.createServer(async (req, res) => {
       console.error(
         "OPENAI ERROR:",
         response.status,
+        data.error?.code || "",
         data.error?.message || ""
       );
 
@@ -120,13 +120,23 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    const answer = data.choices?.[0]?.message?.content;
+    const answer =
+      data.choices?.[0]?.message?.content;
 
     console.log("REQUESTED MODEL:", MODEL);
-    console.log("ACTUAL MODEL:", data.model || "unknown");
+    console.log(
+      "ACTUAL MODEL:",
+      data.model || "unknown"
+    );
 
-    if (!answer?.trim()) {
-      return send(res, 502, { error: "Empty AI response" });
+    if (
+      typeof answer !== "string" ||
+      !answer.trim()
+    ) {
+      return send(res, 502, {
+        error: "Empty AI response",
+        model: data.model || null
+      });
     }
 
     return send(res, 200, {
@@ -136,7 +146,10 @@ const server = http.createServer(async (req, res) => {
 
   } catch (error) {
     console.error("CHAT ERROR:", error.message);
-    return send(res, 502, { error: "Chat unavailable" });
+
+    return send(res, 502, {
+      error: "Chat unavailable"
+    });
   }
 });
 
