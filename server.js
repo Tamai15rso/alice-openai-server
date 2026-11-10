@@ -54,7 +54,7 @@ const server = http.createServer(async (req, res) => {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          model: "gpt-5-mini",
+          model: "gpt-6-luna",
           messages: [
             {
               role: "system",
